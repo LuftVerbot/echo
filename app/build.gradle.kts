@@ -76,6 +76,7 @@ dependencies {
 
     //TODO : use fetch instead of download manager
 //    implementation("com.github.tonyofrancis.Fetch:xfetch2:3.1.6")
+      implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
     testImplementation("org.jetbrains.kotlin:kotlin-reflect:1.9.22")
     testImplementation("junit:junit:4.13.2")
