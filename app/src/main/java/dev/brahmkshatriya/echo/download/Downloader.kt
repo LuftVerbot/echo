@@ -22,6 +22,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.withContext
 import java.io.File
+import okhttp3.*
+import java.io.IOException
+import java.io.InputStream
+import java.util.*
 
 class Downloader(
     private val extensionList: MutableStateFlow<List<MusicExtension>?>,
@@ -87,30 +91,53 @@ class Downloader(
 
         val id = when (audio) {
             is StreamableAudio.ByteStreamAudio -> {
-                TODO("inputStream to file")
+                saveByteStreamToFile(audio.stream, folder, track.title)
             }
 
             is StreamableAudio.StreamableRequest -> {
                 val request = audio.request
-                val downloadRequest = DownloadManager.Request(request.url.toUri()).apply {
-                    request.headers.forEach {
-                        addRequestHeader(it.key, it.value)
-                    }
-                    setTitle(track.title)
-                    setDescription(track.artists.joinToString(", ") { it.name })
-                    setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
-                    downloadDirectoryFor(folder)
-                    setDestinationInExternalPublicDir(
-                        Environment.DIRECTORY_DOWNLOADS,
-                        "$folder/${track.title}"
-                    )
-                }
-                downloadManager().enqueue(downloadRequest)
+                downloadUsingOkHttp(request, folder, track)
             }
         }
 
         dao.insertDownload(DownloadEntity(id, track.id, clientId, parent?.title))
         saveToCache(track.id, track, "downloads")
+    }
+
+    private fun downloadUsingOkHttp(request: dev.brahmkshatriya.echo.common.models.Request, folder: String, track: Track): Long {
+        val client = OkHttpClient()
+        val okhttpRequest = okhttp3.Request.Builder()
+            .url(request.url)
+            .apply {
+                request.headers.forEach { (key, value) ->
+                    addHeader(key, value)
+                }
+            }
+            .build()
+
+        val call = client.newCall(okhttpRequest)
+        val response = call.execute()
+
+        if (!response.isSuccessful) throw IOException("Failed to download file: ${response.code}")
+
+        val file = File(downloadDirectoryFor(folder), track.title)
+        response.body?.byteStream()?.use { input ->
+            file.outputStream().use { output ->
+                input.copyTo(output)
+            }
+        }
+
+        return file.hashCode().toLong()
+    }
+
+    private fun saveByteStreamToFile(stream: InputStream, folder: String, title: String): Long {
+        val file = File(downloadDirectoryFor(folder), title)
+        stream.use { input ->
+            file.outputStream().use { output ->
+                input.copyTo(output)
+            }
+        }
+        return file.hashCode().toLong()
     }
 
     private fun downloadDirectoryFor(folder: String?): File {
@@ -119,19 +146,22 @@ class Downloader(
         return directory
     }
 
-    private fun Context.downloadManager() =
-        getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
-
     suspend fun removeDownload(context: Context, downloadId: Long) {
-        context.downloadManager().remove(downloadId)
         withContext(Dispatchers.IO) {
+            val file = findDownloadedFileById(downloadId)
+            file?.delete()
             dao.deleteDownload(downloadId)
         }
     }
 
+    private fun findDownloadedFileById(downloadId: Long): File? {
+        // Implement logic to find the downloaded file by its ID
+        return null
+    }
+
     fun pauseDownload(context: Context, downloadId: Long) {
+        // Pausing download is more complex with OkHttp and would require additional logic to manage
         println("pauseDownload: $downloadId")
-        context.downloadManager().remove(downloadId)
     }
 
     suspend fun resumeDownload(context: Context, downloadId: Long) = withContext(Dispatchers.IO) {
