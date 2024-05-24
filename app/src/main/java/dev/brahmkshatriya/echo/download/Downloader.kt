@@ -35,13 +35,14 @@ import androidx.core.app.NotificationManagerCompat
 class Downloader(
     private val extensionList: MutableStateFlow<List<MusicExtension>?>,
     database: EchoDatabase,
+    private val context: Context // Pass context here
 ) {
     val dao = database.downloadDao()
     private val channelId = "download_channel"
     private val notificationId = 1
 
     init {
-        createNotificationChannel()
+        createNotificationChannel(context)
     }
 
     suspend fun addToDownload(
@@ -58,7 +59,7 @@ class Downloader(
                         val tracks = client.loadTracks(album)
                         tracks.clear()
                         tracks.loadAll().forEach {
-                            context.enqueueDownload(clientId, client, it, album.toMediaItem())
+                            enqueueDownload(context, clientId, client, it, album.toMediaItem())
                         }
                     }
 
@@ -68,21 +69,22 @@ class Downloader(
                         val tracks = client.loadTracks(playlist)
                         tracks.clear()
                         tracks.loadAll().forEach {
-                            context.enqueueDownload(clientId, client, it, playlist.toMediaItem())
+                            enqueueDownload(context, clientId, client, it, playlist.toMediaItem())
                         }
                     }
                 }
             }
 
             is EchoMediaItem.TrackItem -> {
-                context.enqueueDownload(clientId, client, item.track)
+                enqueueDownload(context, clientId, client, item.track)
             }
 
             else -> throw IllegalArgumentException("Not Supported")
         }
     }
 
-    private suspend fun Context.enqueueDownload(
+    private suspend fun enqueueDownload(
+        context: Context,
         clientId: String,
         client: TrackClient,
         small: Track,
@@ -94,7 +96,7 @@ class Downloader(
         } ?: loaded.album
         val track = loaded.copy(album = album)
 
-        val settings = getSharedPreferences(packageName, Context.MODE_PRIVATE)
+        val settings = context.getSharedPreferences(context.packageName, Context.MODE_PRIVATE)
         val stream = TrackResolver.selectStream(settings, track.audioStreamables)
             ?: throw Exception("No Stream Found")
         val audio = client.getStreamableAudio(stream)
@@ -102,12 +104,12 @@ class Downloader(
 
         val id = when (audio) {
             is StreamableAudio.ByteStreamAudio -> {
-                saveByteStreamToFile(audio.stream, folder, "${track.title}.flac", context)
+                saveByteStreamToFile(context, audio.stream, folder, "${track.title}.flac")
             }
 
             is StreamableAudio.StreamableRequest -> {
                 val request = audio.request
-                downloadUsingOkHttp(request, folder, "${track.title}.flac", context)
+                downloadUsingOkHttp(context, request, folder, "${track.title}.flac")
             }
         }
 
@@ -116,10 +118,10 @@ class Downloader(
     }
 
     private fun downloadUsingOkHttp(
+        context: Context,
         request: dev.brahmkshatriya.echo.common.models.Request, 
         folder: String, 
-        fileName: String, 
-        context: Context
+        fileName: String
     ): Long {
         val client = OkHttpClient()
         val okhttpRequest = okhttp3.Request.Builder()
@@ -163,7 +165,7 @@ class Downloader(
         val builder = NotificationCompat.Builder(context, channelId)
             .setContentTitle("Downloading...")
             .setContentText("Download in progress")
-            .setSmallIcon(R.drawable.ic_download)
+            .setSmallIcon(android.R.drawable.stat_sys_download)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .setProgress(100, progress, false)
 
@@ -174,7 +176,7 @@ class Downloader(
         }
     }
 
-    private fun saveByteStreamToFile(stream: InputStream, folder: String, fileName: String, context: Context): Long {
+    private fun saveByteStreamToFile(context: Context, stream: InputStream, folder: String, fileName: String): Long {
         val file = File(downloadDirectoryFor(folder), fileName)
         file.parentFile?.mkdirs() // Ensure the directory exists
         stream.use { input ->
@@ -227,10 +229,10 @@ class Downloader(
         val track =
             context.getFromCache(download.itemId, Track.creator, "downloads")
                 ?: return@withContext
-        context.enqueueDownload(download.clientId, client, track)
+        enqueueDownload(context, download.clientId, client, track)
     }
 
-    private fun createNotificationChannel() {
+    private fun createNotificationChannel(context: Context) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val name = "Download Channel"
             val descriptionText = "Channel for download progress"
