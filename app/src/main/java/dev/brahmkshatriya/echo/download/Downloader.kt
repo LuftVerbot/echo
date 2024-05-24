@@ -132,6 +132,7 @@ class Downloader(
 
     private fun saveByteStreamToFile(stream: InputStream, folder: String, title: String): Long {
         val file = File(downloadDirectoryFor(folder), title)
+        file.parentFile?.mkdirs() // Ensure the directory exists
         stream.use { input ->
             file.outputStream().use { output ->
                 input.copyTo(output)
@@ -141,7 +142,7 @@ class Downloader(
     }
 
     private fun downloadDirectoryFor(folder: String?): File {
-        val directory = File("${Environment.DIRECTORY_DOWNLOADS}/$folder")
+        val directory = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), folder)
         if (!directory.exists()) directory.mkdirs()
         return directory
     }
