@@ -185,7 +185,8 @@ object MediaStoreUtils {
                     "audio/x-wav",
                     "audio/ogg",
                     "audio/aac",
-                    "audio/midi"
+                    "audio/midi",
+                    "audio/flac"
                 ).joinToString("") { " or ${MediaStore.Audio.Media.MIME_TYPE} = '$it'" }
         val projection =
             arrayListOf(

@@ -1,9 +1,8 @@
 package dev.brahmkshatriya.echo.download
 
-import android.app.DownloadManager
+import android.Manifest
 import android.content.Context
 import android.os.Environment
-import androidx.core.net.toUri
 import dev.brahmkshatriya.echo.EchoDatabase
 import dev.brahmkshatriya.echo.common.clients.AlbumClient
 import dev.brahmkshatriya.echo.common.clients.PlaylistClient
@@ -25,7 +24,6 @@ import java.io.File
 import okhttp3.*
 import java.io.IOException
 import java.io.InputStream
-import java.util.*
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.os.Build
@@ -35,7 +33,8 @@ import androidx.core.app.NotificationManagerCompat
 class Downloader(
     private val extensionList: MutableStateFlow<List<MusicExtension>?>,
     database: EchoDatabase,
-    private val context: Context // Pass context here
+    context: Context,
+    private val downloadCompleted: (DownloadEntity) -> Unit // Callback to notify download completion
 ) {
     val dao = database.downloadDao()
     private val channelId = "download_channel"
@@ -96,35 +95,47 @@ class Downloader(
         } ?: loaded.album
         val track = loaded.copy(album = album)
 
+        // Fetch the artist information
+        val artist = track.artists
+
+        // Fetch the image
+        val imageUrl = track.cover
+
+        // Create a new track with complete metadata
+        val completeTrack = track.copy(album = album, artists = artist, cover = imageUrl)
+
         val settings = context.getSharedPreferences(context.packageName, Context.MODE_PRIVATE)
-        val stream = TrackResolver.selectStream(settings, track.audioStreamables)
+        val stream = TrackResolver.selectStream(settings, completeTrack.audioStreamables)
             ?: throw Exception("No Stream Found")
         val audio = client.getStreamableAudio(stream)
         val folder = "Echo${parent?.title?.let { "/$it" } ?: ""}"
 
         val id = when (audio) {
             is StreamableAudio.ByteStreamAudio -> {
-                saveByteStreamToFile(context, audio.stream, folder, "${track.title}.flac")
+                saveByteStreamToFile(context, audio.stream, folder, "${completeTrack.title}.flac")
             }
 
             is StreamableAudio.StreamableRequest -> {
                 val request = audio.request
-                downloadUsingOkHttp(context, request, folder, "${track.title}.flac")
+                downloadUsingOkHttp(context, request, folder, "${completeTrack.title}.flac")
             }
         }
 
-        dao.insertDownload(DownloadEntity(id, track.id, clientId, parent?.title))
-        saveToCache(track.id, track, "downloads")
+        val downloadEntity = DownloadEntity(id, completeTrack.id, clientId, parent?.title)
+        dao.insertDownload(downloadEntity)
+        context.saveToCache(completeTrack.id, completeTrack, "downloads")
+        // Notify download completion
+        downloadCompleted(downloadEntity)
     }
 
     private fun downloadUsingOkHttp(
         context: Context,
-        request: dev.brahmkshatriya.echo.common.models.Request, 
-        folder: String, 
+        request: dev.brahmkshatriya.echo.common.models.Request,
+        folder: String,
         fileName: String
     ): Long {
         val client = OkHttpClient()
-        val okhttpRequest = okhttp3.Request.Builder()
+        val okhttpRequest = Request.Builder()
             .url(request.url)
             .apply {
                 request.headers.forEach { (key, value) ->
