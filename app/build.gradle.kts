@@ -76,6 +76,10 @@ dependencies {
 
     //TODO : use fetch instead of download manager
 //    implementation("com.github.tonyofrancis.Fetch:xfetch2:3.1.6")
+      implementation("com.tonyodev.fetch2:fetch2:3.1.6")
+      implementation("com.tonyodev.fetch2okhttp:fetch2okhttp:3.1.6")
+      implementation("androidx.legacy:legacy-support-v4:1.0.0")
+      implementation("androidx.work:work-runtime-ktx:2.7.1")
 
     testImplementation("org.jetbrains.kotlin:kotlin-reflect:1.9.22")
     testImplementation("junit:junit:4.13.2")
