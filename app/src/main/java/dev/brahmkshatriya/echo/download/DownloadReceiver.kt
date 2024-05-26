@@ -12,7 +12,7 @@ import com.kyant.taglib.Metadata
 import com.kyant.taglib.Picture
 import com.kyant.taglib.PropertyMap
 import com.kyant.taglib.TagLib
-import com.tonyodev.fetch2.*
+import androidx.tonyodev.xfetch2.*
 import dagger.hilt.android.AndroidEntryPoint
 import dev.brahmkshatriya.echo.EchoDatabase
 import dev.brahmkshatriya.echo.common.models.Track
