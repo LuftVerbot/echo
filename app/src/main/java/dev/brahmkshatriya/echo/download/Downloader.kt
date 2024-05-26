@@ -1,9 +1,11 @@
 package dev.brahmkshatriya.echo.download
 
-import android.app.DownloadManager
 import android.content.Context
 import android.os.Environment
 import androidx.core.net.toUri
+import com.tonyodev.fetch2.*
+import com.tonyodev.fetch2core.Downloader
+import com.tonyodev.fetch2okhttp.OkHttpDownloader
 import dev.brahmkshatriya.echo.EchoDatabase
 import dev.brahmkshatriya.echo.common.clients.AlbumClient
 import dev.brahmkshatriya.echo.common.clients.PlaylistClient
@@ -28,6 +30,15 @@ class Downloader(
     database: EchoDatabase,
 ) {
     val dao = database.downloadDao()
+    private val fetch: Fetch
+
+    init {
+        val fetchConfiguration = FetchConfiguration.Builder(context)
+            .setDownloadConcurrentLimit(3)
+            .setHttpDownloader(OkHttpDownloader(Downloader.FileDownloaderType.PARALLEL))
+            .build()
+        fetch = Fetch.getInstance(fetchConfiguration)
+    }
 
     suspend fun addToDownload(
         context: Context, clientId: String, item: EchoMediaItem
@@ -84,64 +95,49 @@ class Downloader(
             ?: throw Exception("No Stream Found")
         val audio = client.getStreamableAudio(stream)
         val folder = "Echo${parent?.title?.let { "/$it" } ?: ""}"
+        val file = File(getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), "$folder/${track.title}")
 
-        val id = when (audio) {
+        val request = when (audio) {
             is StreamableAudio.ByteStreamAudio -> {
                 TODO("inputStream to file")
             }
 
             is StreamableAudio.StreamableRequest -> {
-                val request = audio.request
-                val downloadRequest = DownloadManager.Request(request.url.toUri()).apply {
-                    request.headers.forEach {
-                        addRequestHeader(it.key, it.value)
-                    }
+                val fetchRequest = Request(audio.request.url).apply {
                     setTitle(track.title)
                     setDescription(track.artists.joinToString(", ") { it.name })
-                    setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
-                    downloadDirectoryFor(folder)
-                    setDestinationInExternalPublicDir(
-                        Environment.DIRECTORY_DOWNLOADS,
-                        "$folder/${track.title}"
-                    )
+                    setNotificationVisibility(NotificationVisibility.VISIBLE)
+                    setDestinationFilePath(file.absolutePath)
+                    audio.request.headers.forEach {
+                        addHeader(it.key, it.value)
+                    }
                 }
-                downloadManager().enqueue(downloadRequest)
+                fetch.enqueue(fetchRequest, {
+                    dao.insertDownload(DownloadEntity(it.id.toLong(), track.id, clientId, parent?.title))
+                    saveToCache(track.id, track, "downloads")
+                }, {
+                    // Handle errors
+                })
             }
         }
-
-        dao.insertDownload(DownloadEntity(id, track.id, clientId, parent?.title))
-        saveToCache(track.id, track, "downloads")
     }
-
-    private fun downloadDirectoryFor(folder: String?): File {
-        val directory = File("${Environment.DIRECTORY_DOWNLOADS}/$folder")
-        if (!directory.exists()) directory.mkdirs()
-        return directory
-    }
-
-    private fun Context.downloadManager() =
-        getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
 
     suspend fun removeDownload(context: Context, downloadId: Long) {
-        context.downloadManager().remove(downloadId)
+        fetch.remove(downloadId.toInt())
         withContext(Dispatchers.IO) {
             dao.deleteDownload(downloadId)
         }
     }
 
     fun pauseDownload(context: Context, downloadId: Long) {
-        println("pauseDownload: $downloadId")
-        context.downloadManager().remove(downloadId)
+        fetch.pause(downloadId.toInt())
     }
 
     suspend fun resumeDownload(context: Context, downloadId: Long) = withContext(Dispatchers.IO) {
-        println("resumeDownload: $downloadId")
         val download = dao.getDownload(downloadId) ?: return@withContext
         val client = extensionList.getExtension(download.clientId)?.client
         client as TrackClient
-        val track =
-            context.getFromCache(download.itemId, Track.creator, "downloads")
-                ?: return@withContext
+        val track = context.getFromCache(download.itemId, Track.creator, "downloads") ?: return@withContext
         context.enqueueDownload(download.clientId, client, track)
     }
 }
