@@ -3,9 +3,9 @@ package dev.brahmkshatriya.echo.download
 import android.content.Context
 import android.os.Environment
 import androidx.core.net.toUri
-import com.tonyodev.fetch2.*
-import com.tonyodev.fetch2core.Downloader
-import com.tonyodev.fetch2okhttp.OkHttpDownloader
+import androidx.tonyodev.xfetch2.*
+import androidx.tonyodev.xfetch2core.Downloader
+import androidx.tonyodev.xfetch2okhttp.OkHttpDownloader
 import dev.brahmkshatriya.echo.EchoDatabase
 import dev.brahmkshatriya.echo.common.clients.AlbumClient
 import dev.brahmkshatriya.echo.common.clients.PlaylistClient
