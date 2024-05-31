@@ -36,7 +36,7 @@ class DownloadViewModel @Inject constructor(
     val downloads = MutableStateFlow<List<DownloadItem>>(emptyList())
     private val visibleGroups = mutableSetOf<String>()
     private val downloadEntities = MutableStateFlow<List<DownloadEntity>>(emptyList())
-    private val downloader = Downloader(extensionListFlow, database)
+    private val downloader = Downloader(application, extensionListFlow, database)
 
     init {
         viewModelScope.launch {
@@ -70,7 +70,7 @@ class DownloadViewModel @Inject constructor(
         activity: FragmentActivity, clientId: String, item: EchoMediaItem
     ) = viewModelScope.launch {
         tryWith {
-            downloader.addToDownload(activity, clientId, item)
+            downloader.addToDownload(clientId, item)
             with(activity) {
                 messageFlow.emit(
                     SnackBar.Message(
@@ -93,16 +93,16 @@ class DownloadViewModel @Inject constructor(
     fun toggleDownloading(download: DownloadItem.Single, downloading: Boolean) {
         viewModelScope.launch {
             if (downloading) {
-                tryWith { downloader.resumeDownload(application, download.id) }
+                tryWith { downloader.resumeDownload(download.id) }
             } else {
-                tryWith { downloader.pauseDownload(application, download.id) }
+                tryWith { downloader.pauseDownload(download.id) }
             }
         }
     }
 
     fun removeDownload(download: DownloadItem.Single) {
         viewModelScope.launch {
-            tryWith { downloader.removeDownload(application, download.id) }
+            tryWith { downloader.removeDownload(download.id) }
         }
     }
 
