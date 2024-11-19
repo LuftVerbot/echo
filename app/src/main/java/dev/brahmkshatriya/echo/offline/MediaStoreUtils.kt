@@ -356,7 +356,7 @@ object MediaStoreUtils {
                 isLiked = liked,
                 genre = genre,
                 description = description,
-                streamables = listOf(Streamable.audio(path, 0)),
+                streamables = listOf(Streamable.source(path, 0)),
                 extras = mapOf(
                     "addDate" to addDate.toString(),
                     "trackNumber" to trackNumber.toString()

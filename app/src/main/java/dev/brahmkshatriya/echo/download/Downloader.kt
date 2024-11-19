@@ -16,6 +16,7 @@ import dev.brahmkshatriya.echo.common.clients.TrackClient
 import dev.brahmkshatriya.echo.common.models.Album
 import dev.brahmkshatriya.echo.common.models.EchoMediaItem
 import dev.brahmkshatriya.echo.common.models.Streamable
+import dev.brahmkshatriya.echo.common.models.EchoMediaItem.Companion.toMediaItem
 import dev.brahmkshatriya.echo.common.models.Track
 import dev.brahmkshatriya.echo.db.models.DownloadEntity
 import dev.brahmkshatriya.echo.extensions.get
@@ -193,11 +194,11 @@ class Downloader(
                         } ?: loadedTrack.album
 
                 val completeTrack = loadedTrack.copy(album = album, cover = track.cover)
-                val stream = selectAudioStream(settings, completeTrack.audioStreamables)
+                val stream = selectAudioStream(settings, completeTrack.sources)
                     ?: throw Exception("No audio stream available for download")
 
-                val media = extension.get<TrackClient, Streamable.Media.AudioOnly>(throwable) {
-                    getStreamableMedia(stream) as Streamable.Media.AudioOnly
+                val media = extension.get<TrackClient, Streamable.Media.Sources>(throwable) {
+                    getStreamableMedia(stream) as Streamable.Media.Sources
                 } ?: return@launch
 
                 val sanitizedParent = illegalChars.replace(parent?.title.orEmpty(), "_")
@@ -208,9 +209,9 @@ class Downloader(
                 val targetDirectory = File(downloadsDir, folder).apply { mkdirs() }
 
                 val sanitizedTitle = illegalChars.replace(completeTrack.title, "_")
-                val fileExtension = when (media.audio) {
-                    is Streamable.Audio.Http -> "m4a"
-                    is Streamable.Audio.Channel, is Streamable.Audio.ByteStream -> "mp3"
+                val fileExtension = when (media.sources.firstOrNull()) {
+                    is Streamable.Source.Http -> "m4a"
+                    is Streamable.Source.Channel, is Streamable.Source.ByteStream -> "mp3"
                     else -> "m4a"
                 }
 
@@ -238,8 +239,8 @@ class Downloader(
                     )
                 }
 
-                val job = when (val audio = media.audio) {
-                    is Streamable.Audio.Http -> handleHttpDownload(
+                val job = when (val audio = media.sources.firstOrNull()) {
+                    is Streamable.Source.Http -> handleHttpDownload(
                         context,
                         extension,
                         audio,
@@ -251,7 +252,7 @@ class Downloader(
                         order
                     )
 
-                    is Streamable.Audio.Channel, is Streamable.Audio.ByteStream -> handleStreamDownload(
+                    is Streamable.Source.Channel, is Streamable.Source.ByteStream -> handleStreamDownload(
                         context,
                         extension,
                         audio,
@@ -286,7 +287,7 @@ class Downloader(
     private fun handleHttpDownload(
         context: Context,
         extension: Extension<*>,
-        audio: Streamable.Audio.Http,
+        audio: Streamable.Source.Http,
         completeTrack: Track,
         file: File,
         downloadId: Long,
@@ -358,7 +359,7 @@ class Downloader(
     private fun handleStreamDownload(
         context: Context,
         extension: Extension<*>,
-        audio: Streamable.Audio,
+        audio: Streamable.Source,
         completeTrack: Track,
         targetDirectory: File,
         sanitizedTitle: String,
@@ -372,15 +373,15 @@ class Downloader(
         downloadSemaphore.withPermit {
             val tempFile = File(targetDirectory, "$sanitizedTitle.tmp").apply { createNewFile() }
             val inputStream = when (audio) {
-                is Streamable.Audio.Channel -> audio.channel.toInputStream()
-                is Streamable.Audio.ByteStream -> audio.stream
+                is Streamable.Source.Channel -> audio.channel.toInputStream()
+                is Streamable.Source.ByteStream -> audio.stream
                 else -> null
             } ?: throw IllegalArgumentException("Unsupported audio stream type")
 
             var received: Long = 0
             val totalBytes = when (audio) {
-                is Streamable.Audio.Channel -> audio.totalBytes
-                is Streamable.Audio.ByteStream -> audio.totalBytes
+                is Streamable.Source.Channel -> audio.totalBytes
+                is Streamable.Source.ByteStream -> audio.totalBytes
                 else -> -1L
             }
 
