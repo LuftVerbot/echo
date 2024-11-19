@@ -164,6 +164,14 @@ class AudioFragment : BaseSettingsFragment() {
                     "lowest" -> streamables.minByOrNull { it.quality }
                     else -> streamables.firstOrNull()
                 }
+
+            fun selectSourceStream(settings: SharedPreferences?, sources: List<Streamable.Source>) =
+                when (settings?.getString(AUDIO_STREAM_QUALITY, "medium")) {
+                    "highest" -> sources.maxByOrNull { it.quality }
+                    "medium" -> sources.sortedBy { it.quality }.getOrNull(sources.size / 2)
+                    "lowest" -> sources.minByOrNull { it.quality }
+                    else -> sources.firstOrNull()
+                }
         }
     }
 }

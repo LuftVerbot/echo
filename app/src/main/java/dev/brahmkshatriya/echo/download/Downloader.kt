@@ -16,13 +16,13 @@ import dev.brahmkshatriya.echo.common.clients.TrackClient
 import dev.brahmkshatriya.echo.common.models.Album
 import dev.brahmkshatriya.echo.common.models.EchoMediaItem
 import dev.brahmkshatriya.echo.common.models.Streamable
-import dev.brahmkshatriya.echo.common.models.EchoMediaItem.Companion.toMediaItem
 import dev.brahmkshatriya.echo.common.models.Track
 import dev.brahmkshatriya.echo.db.models.DownloadEntity
 import dev.brahmkshatriya.echo.extensions.get
 import dev.brahmkshatriya.echo.extensions.getExtension
 import dev.brahmkshatriya.echo.offline.MediaStoreUtils.id
 import dev.brahmkshatriya.echo.ui.settings.AudioFragment.AudioPreference.Companion.selectAudioStream
+import dev.brahmkshatriya.echo.ui.settings.AudioFragment.AudioPreference.Companion.selectSourceStream
 import dev.brahmkshatriya.echo.utils.getFromCache
 import dev.brahmkshatriya.echo.utils.saveToCache
 import io.ktor.utils.io.jvm.javaio.toInputStream
@@ -201,6 +201,8 @@ class Downloader(
                     getStreamableMedia(stream) as Streamable.Media.Sources
                 } ?: return@launch
 
+                val source = selectSourceStream(settings, media.sources)
+
                 val sanitizedParent = illegalChars.replace(parent?.title.orEmpty(), "_")
                 val folder =
                     if (sanitizedParent.isNotBlank()) "Echo/$sanitizedParent" else "Echo"
@@ -209,7 +211,7 @@ class Downloader(
                 val targetDirectory = File(downloadsDir, folder).apply { mkdirs() }
 
                 val sanitizedTitle = illegalChars.replace(completeTrack.title, "_")
-                val fileExtension = when (media.sources.firstOrNull()) { //TODO("work on source managing")
+                val fileExtension = when (source) {
                     is Streamable.Source.Http -> "m4a"
                     is Streamable.Source.Channel, is Streamable.Source.ByteStream -> "mp3"
                     else -> "m4a"
@@ -239,11 +241,11 @@ class Downloader(
                     )
                 }
 
-                val job = when (val audio = media.sources.firstOrNull()) { //TODO("work on source managing")
+                val job = when (source) { //TODO("work on source managing")
                     is Streamable.Source.Http -> handleHttpDownload(
                         context,
                         extension,
-                        audio,
+                        source,
                         completeTrack,
                         uniqueFile,
                         downloadId,
@@ -255,7 +257,7 @@ class Downloader(
                     is Streamable.Source.Channel, is Streamable.Source.ByteStream -> handleStreamDownload(
                         context,
                         extension,
-                        audio,
+                        source,
                         completeTrack,
                         targetDirectory,
                         sanitizedTitle,
