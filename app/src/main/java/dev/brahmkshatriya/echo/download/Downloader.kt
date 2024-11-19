@@ -21,8 +21,7 @@ import dev.brahmkshatriya.echo.db.models.DownloadEntity
 import dev.brahmkshatriya.echo.extensions.get
 import dev.brahmkshatriya.echo.extensions.getExtension
 import dev.brahmkshatriya.echo.offline.MediaStoreUtils.id
-import dev.brahmkshatriya.echo.ui.settings.AudioFragment.AudioPreference.Companion.selectAudioStream
-import dev.brahmkshatriya.echo.ui.settings.AudioFragment.AudioPreference.Companion.selectSourceStream
+import dev.brahmkshatriya.echo.ui.settings.AudioFragment.AudioPreference.Companion.select
 import dev.brahmkshatriya.echo.utils.getFromCache
 import dev.brahmkshatriya.echo.utils.saveToCache
 import io.ktor.utils.io.jvm.javaio.toInputStream
@@ -194,14 +193,13 @@ class Downloader(
                         } ?: loadedTrack.album
 
                 val completeTrack = loadedTrack.copy(album = album, cover = track.cover)
-                val stream = selectAudioStream(settings, completeTrack.sources)
-                    ?: throw Exception("No audio stream available for download")
+                val stream = completeTrack.sources.select(settings)
 
                 val media = extension.get<TrackClient, Streamable.Media.Sources>(throwable) {
                     getStreamableMedia(stream) as Streamable.Media.Sources
                 } ?: return@launch
 
-                val source = selectSourceStream(settings, media.sources)
+                val source = media.sources.select(settings)
 
                 val sanitizedParent = illegalChars.replace(parent?.title.orEmpty(), "_")
                 val folder =
