@@ -209,7 +209,7 @@ class Downloader(
                 val targetDirectory = File(downloadsDir, folder).apply { mkdirs() }
 
                 val sanitizedTitle = illegalChars.replace(completeTrack.title, "_")
-                val fileExtension = when (media.sources.firstOrNull()) {
+                val fileExtension = when (media.sources.firstOrNull()) { //TODO("work on source managing")
                     is Streamable.Source.Http -> "m4a"
                     is Streamable.Source.Channel, is Streamable.Source.ByteStream -> "mp3"
                     else -> "m4a"
@@ -239,7 +239,7 @@ class Downloader(
                     )
                 }
 
-                val job = when (val audio = media.sources.firstOrNull()) {
+                val job = when (val audio = media.sources.firstOrNull()) { //TODO("work on source managing")
                     is Streamable.Source.Http -> handleHttpDownload(
                         context,
                         extension,
