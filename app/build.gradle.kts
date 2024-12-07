@@ -32,6 +32,15 @@ android {
         }
     }
 
+    splits {
+        abi {
+            isEnable = true
+            reset()
+            include("armeabi-v7a", "arm64-v8a", "x86", "x86_64")
+            isUniversalApk = true
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
@@ -104,6 +113,7 @@ dependencies {
     implementation("com.github.paramsen:noise:2.0.0")
 
     implementation("com.arthenica:ffmpeg-kit-https:6.0-2")
+    implementation("net.jthink:jaudiotagger:3.0.1")
 
     testImplementation("org.jetbrains.kotlin:kotlin-reflect:1.9.24")
     testImplementation("junit:junit:4.13.2")

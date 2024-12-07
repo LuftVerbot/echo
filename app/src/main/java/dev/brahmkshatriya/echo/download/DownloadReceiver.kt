@@ -19,10 +19,13 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import org.jaudiotagger.audio.AudioFileIO
+import org.jaudiotagger.tag.FieldKey
+import org.jaudiotagger.tag.TagOptionSingleton
+import org.jaudiotagger.tag.images.ArtworkFactory
 import java.io.File
 import java.io.FileOutputStream
 import javax.inject.Inject
@@ -76,7 +79,7 @@ class DownloadReceiver : BroadcastReceiver() {
 
         val file = File(download.downloadPath)
         if (file.exists()) {
-            writeM4ATag(file, track, order)
+            writeTags(file, track, order)
 
             withContext(Dispatchers.Main) {
                 MediaScannerConnection.scanFile(
@@ -125,22 +128,46 @@ class DownloadReceiver : BroadcastReceiver() {
 
     private val illegalChars = "[/\\\\:*?\"<>|]".toRegex()
 
-    private suspend fun writeM4ATag(file: File, track: Track, order: Int) = withContext(Dispatchers.IO) {
+    private suspend fun writeTags(file: File, track: Track, order: Int) = withContext(Dispatchers.IO) {
+        val fileExtension = file.extension.lowercase()
+
         try {
             val coverFile = saveCoverBitmap(file, track)
 
-            val outputFile = File(file.parent, "temp_${file.name}")
+            if (fileExtension == "mp3" || fileExtension == "m4a") {
+                TagOptionSingleton.getInstance().isAndroid = true
 
-            val metadataOrder = "track=\"$order\""
-            val metadataTitle = "title=\"${illegalChars.replace(track.title, "_")}\""
-            val metadataArtist = "artist=\"${track.artists.joinToString(", ") { it.name }}\""
-            val metadataAlbum = "album=\"${illegalChars.replace(track.album?.title.orEmpty(), "_")}\""
+                val audioFile = AudioFileIO.read(file)
+                val tag = audioFile.tagOrCreateAndSetDefault
 
-            val metadataCoverTitle = "title=\"Album cover\""
-            val metadataCoverComment = "comment=\"Cover (front)\""
+                tag.setField(FieldKey.TRACK, order.toString())
+                tag.setField(FieldKey.TITLE, illegalChars.replace(track.title, "_"))
+                tag.setField(FieldKey.ARTIST, track.artists.joinToString(", ") { it.name })
+                tag.setField(FieldKey.ALBUM, illegalChars.replace(track.album?.title.orEmpty(), "_"))
+                tag.setField(FieldKey.LYRICS, "TEST MP3/M4A")
 
-            val cmd = when (file.extension.lowercase()) {
-                "m4a", "flac" ->
+                coverFile?.let {
+                    val artwork = ArtworkFactory.createArtworkFromFile(it)
+                    tag.deleteArtworkField()
+                    tag.addField(artwork)
+                }
+
+                AudioFileIO.write(audioFile)
+
+                coverFile?.delete()
+
+            } else {
+                val outputFile = File(file.parent, "temp_${file.name}")
+
+                val metadataOrder = "track=\"$order\""
+                val metadataTitle = "title=\"${illegalChars.replace(track.title, "_")}\""
+                val metadataArtist = "artist=\"${track.artists.joinToString(", ") { it.name }}\""
+                val metadataAlbum = "album=\"${illegalChars.replace(track.album?.title.orEmpty(), "_")}\""
+
+                val metadataCoverTitle = "title=\"Album cover\""
+                val metadataCoverComment = "comment=\"Cover (front)\""
+
+                val cmd =
                     arrayOf(
                         "-i", "\"${file.absolutePath}\"",
                         "-i", "\"${coverFile?.absolutePath}\"",
@@ -150,42 +177,23 @@ class DownloadReceiver : BroadcastReceiver() {
                         "-metadata", metadataTitle,
                         "-metadata", metadataArtist,
                         "-metadata", metadataAlbum,
+                        "-metadata", "lyrics=\"TEST FLAC\"",
                         "-metadata:s:v", metadataCoverTitle,
                         "-metadata:s:v", metadataCoverComment,
                         "-disposition:v", "attached_pic",
                         "\"${outputFile.absolutePath}\""
                     )
 
-                "mp3" ->
-                    arrayOf(
-                        "-i", "\"${file.absolutePath}\"",
-                        "-i", "\"${coverFile?.absolutePath}\"",
-                        "-map", "0:0",
-                        "-map", "1:0",
-                        "-c", "copy",
-                        "-id3v2_version", "4",
-                        "-metadata", metadataOrder,
-                        "-metadata", metadataTitle,
-                        "-metadata", metadataArtist,
-                        "-metadata", metadataAlbum,
-                        "-metadata:s:v", metadataCoverTitle,
-                        "-metadata:s:v", metadataCoverComment,
-                        "\"${outputFile.absolutePath}\""
-                    )
+                val rc = FFmpegKit.execute(cmd.joinToString(" ")).returnCode
 
-                else -> throw IllegalArgumentException("Unsupported file format: .${file.extension}")
-            }
-
-            val rc = FFmpegKit.execute(cmd.joinToString(" ")).returnCode
-
-
-            if (ReturnCode.isSuccess(rc)) {
-                if (file.delete()) {
-                    outputFile.renameTo(file)
+                if (ReturnCode.isSuccess(rc)) {
+                    if (file.delete()) {
+                        outputFile.renameTo(file)
+                    }
                 }
-            }
 
-            coverFile?.delete()
+                coverFile?.delete()
+            }
 
         } catch (e: Exception) {
             e.printStackTrace()

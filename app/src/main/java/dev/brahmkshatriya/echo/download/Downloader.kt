@@ -239,7 +239,7 @@ class Downloader(
                     )
                 }
 
-                val job = when (source) { //TODO("work on source managing")
+                val job = when (source) {
                     is Streamable.Source.Http -> handleHttpDownload(
                         context,
                         extension,
