@@ -12,6 +12,7 @@ import com.arthenica.ffmpegkit.ReturnCode
 import dagger.hilt.android.AndroidEntryPoint
 import dev.brahmkshatriya.echo.EchoDatabase
 import dev.brahmkshatriya.echo.common.models.ImageHolder
+import dev.brahmkshatriya.echo.common.models.Lyrics
 import dev.brahmkshatriya.echo.common.models.Track
 import dev.brahmkshatriya.echo.db.DownloadDao
 import dev.brahmkshatriya.echo.utils.getFromCache
@@ -77,9 +78,16 @@ class DownloadReceiver : BroadcastReceiver() {
             return
         }
 
+        val lyrics = withContext(Dispatchers.IO) {
+            context.applicationContext.getFromCache<Lyrics?>(download.itemId, "lyrics")
+        } ?: run {
+            Log.e("DownloadReceiver", "Track not found in cache for ID: ${download.itemId}")
+            return
+        }
+
         val file = File(download.downloadPath)
         if (file.exists()) {
-            writeTags(file, track, order)
+            writeTags(file, track, order, lyrics)
 
             withContext(Dispatchers.Main) {
                 MediaScannerConnection.scanFile(
@@ -128,8 +136,32 @@ class DownloadReceiver : BroadcastReceiver() {
 
     private val illegalChars = "[/\\\\:*?\"<>|]".toRegex()
 
-    private suspend fun writeTags(file: File, track: Track, order: Int) = withContext(Dispatchers.IO) {
+    private suspend fun writeTags(file: File, track: Track, order: Int, lyrics: Lyrics) = withContext(Dispatchers.IO) {
         val fileExtension = file.extension.lowercase()
+
+        fun formatTime(millis: Long): String {
+            val mm = millis / 60000
+            val remainder = millis % 60000
+            val ss = remainder / 1000
+            val ms = remainder % 1000
+
+            val hundredths = (ms / 10)
+            return String.format("[%02d:%02d.%02d]", mm, ss, hundredths)
+        }
+
+        val lyricsText = when(val lyric = lyrics.lyrics) {
+            is Lyrics.Timed -> {
+                lyric.list.joinToString("\n") { item ->
+                    "${formatTime(item.startTime)}${item.text}"
+                }
+            }
+
+            is Lyrics.Simple -> {
+                lyric.text
+            }
+
+            null -> TODO()
+        }
 
         try {
             val coverFile = saveCoverBitmap(file, track)
@@ -144,7 +176,7 @@ class DownloadReceiver : BroadcastReceiver() {
                 tag.setField(FieldKey.TITLE, illegalChars.replace(track.title, "_"))
                 tag.setField(FieldKey.ARTIST, track.artists.joinToString(", ") { it.name })
                 tag.setField(FieldKey.ALBUM, illegalChars.replace(track.album?.title.orEmpty(), "_"))
-                tag.setField(FieldKey.LYRICS, "TEST MP3/M4A")
+                tag.setField(FieldKey.LYRICS, lyricsText)
 
                 coverFile?.let {
                     val artwork = ArtworkFactory.createArtworkFromFile(it)
@@ -177,7 +209,7 @@ class DownloadReceiver : BroadcastReceiver() {
                         "-metadata", metadataTitle,
                         "-metadata", metadataArtist,
                         "-metadata", metadataAlbum,
-                        "-metadata", "lyrics=\"TEST FLAC\"",
+                        "-metadata", "lyrics=\"${lyricsText.replace("\"", "'")}\"",
                         "-metadata:s:v", metadataCoverTitle,
                         "-metadata:s:v", metadataCoverComment,
                         "-disposition:v", "attached_pic",

@@ -11,15 +11,19 @@ import dev.brahmkshatriya.echo.EchoDatabase
 import dev.brahmkshatriya.echo.common.Extension
 import dev.brahmkshatriya.echo.common.MusicExtension
 import dev.brahmkshatriya.echo.common.clients.AlbumClient
+import dev.brahmkshatriya.echo.common.clients.LyricsClient
 import dev.brahmkshatriya.echo.common.clients.PlaylistClient
 import dev.brahmkshatriya.echo.common.clients.TrackClient
+import dev.brahmkshatriya.echo.common.helpers.PagedData
 import dev.brahmkshatriya.echo.common.models.Album
 import dev.brahmkshatriya.echo.common.models.EchoMediaItem
+import dev.brahmkshatriya.echo.common.models.Lyrics
 import dev.brahmkshatriya.echo.common.models.Streamable
 import dev.brahmkshatriya.echo.common.models.Track
 import dev.brahmkshatriya.echo.db.models.DownloadEntity
 import dev.brahmkshatriya.echo.extensions.get
 import dev.brahmkshatriya.echo.extensions.getExtension
+import dev.brahmkshatriya.echo.extensions.run
 import dev.brahmkshatriya.echo.offline.MediaStoreUtils.id
 import dev.brahmkshatriya.echo.ui.settings.AudioFragment.AudioPreference.Companion.select
 import dev.brahmkshatriya.echo.utils.getFromCache
@@ -193,10 +197,10 @@ class Downloader(
                         } ?: loadedTrack.album
 
                 val completeTrack = loadedTrack.copy(album = album, cover = track.cover)
-                val stream = completeTrack.sources.select(settings)
+                val stream = completeTrack.servers.select(settings)
 
-                val media = extension.get<TrackClient, Streamable.Media.Sources>(throwable) {
-                    getStreamableMedia(stream) as Streamable.Media.Sources
+                val media = extension.get<TrackClient, Streamable.Media.Server>(throwable) {
+                    loadStreamableMedia(stream) as Streamable.Media.Server
                 } ?: return@launch
 
                 val source = media.sources.select(settings)
@@ -436,6 +440,7 @@ class Downloader(
                     }
                 }
 
+                val clientId = extensionList.value?.find { it.id == extension.id }?.id.orEmpty()
                 val detectedExtension = probeFileFormat(tempFile) ?: fileExtension
                 val finalFile = getUniqueFile(targetDirectory, sanitizedTitle, detectedExtension)
                 if (tempFile.renameTo(finalFile)) {
@@ -443,14 +448,21 @@ class Downloader(
                         DownloadEntity(
                             id = downloadId,
                             itemId = completeTrack.id,
-                            clientId = extensionList.value?.find { it.id == extension.id }?.id
-                                ?: "",
+                            clientId = clientId,
                             groupName = group?.title,
                             downloadPath = finalFile.absolutePath
                         )
                     )
 
                     context.saveToCache(completeTrack.id, completeTrack, "downloads")
+                    try {
+                        val data = getLyrics(extension, completeTrack, clientId)
+                        if (data != null) {
+                            context.saveToCache(completeTrack.id, data, "lyrics")
+                        }
+                    } catch (e: Exception) {
+                        throwable
+                    }
                     sendDownloadCompleteBroadcast(context, downloadId, order)
 
                     updateGroupProgress(context, group, notificationId)
@@ -484,6 +496,40 @@ class Downloader(
                 notificationBuilders.remove(notificationId)
             }
         }
+    }
+
+    private suspend fun getLyrics(
+        extension: Extension<*>,
+        track: Track,
+        clientId: String
+    ): Lyrics? {
+        val data = extension.get<LyricsClient, PagedData<Lyrics>>(throwable) {
+            searchTrackLyrics(clientId, track)
+        }
+        val value = extension.run(throwable) { data?.loadFirst()?.firstOrNull() }
+        return if (value != null) {
+            extension.get<LyricsClient, Lyrics>(throwable) {
+                loadLyrics(value)
+            }?.fillGaps()
+        } else {
+            null
+        }
+    }
+
+    private fun Lyrics.fillGaps(): Lyrics {
+        val lyrics = this.lyrics as? Lyrics.Timed
+        return if (lyrics != null && lyrics.fillTimeGaps) {
+            val new = mutableListOf<Lyrics.Item>()
+            var last = 0L
+            lyrics.list.forEach {
+                if (it.startTime > last) {
+                    new.add(Lyrics.Item("", last, it.startTime))
+                }
+                new.add(it)
+                last = it.endTime
+            }
+            this.copy(lyrics = Lyrics.Timed(new))
+        } else this
     }
 
     private fun sendDownloadCompleteBroadcast(context: Context, downloadId: Long, order: Int) {
