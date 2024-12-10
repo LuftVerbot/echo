@@ -4,7 +4,6 @@ import android.content.Context
 import android.content.Intent
 import android.os.Environment
 import androidx.core.app.NotificationCompat
-import com.arthenica.ffmpegkit.FFmpegKit
 import com.arthenica.ffmpegkit.FFprobeKit
 import com.arthenica.ffmpegkit.ReturnCode
 import dev.brahmkshatriya.echo.EchoDatabase
@@ -38,6 +37,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
+import okhttp3.OkHttpClient
+import okhttp3.Request
 import java.io.BufferedInputStream
 import java.io.File
 import java.io.FileOutputStream
@@ -243,36 +244,20 @@ class Downloader(
                     )
                 }
 
-                val job = when (source) {
-                    is Streamable.Source.Http -> handleHttpDownload(
-                        context,
-                        extension,
-                        source,
-                        completeTrack,
-                        uniqueFile,
-                        downloadId,
-                        notificationId,
-                        group,
-                        order
-                    )
-
-                    is Streamable.Source.Channel, is Streamable.Source.ByteStream -> handleStreamDownload(
-                        context,
-                        extension,
-                        source,
-                        completeTrack,
-                        targetDirectory,
-                        sanitizedTitle,
-                        fileExtension,
-                        downloadId,
-                        notificationId,
-                        notificationBuilder,
-                        group,
-                        order
-                    )
-
-                    else -> throw Exception("Unsupported audio stream type")
-                }
+                val job = handleDownload(
+                    context,
+                    extension,
+                    source,
+                    completeTrack,
+                    targetDirectory,
+                    sanitizedTitle,
+                    fileExtension,
+                    downloadId,
+                    notificationId,
+                    notificationBuilder,
+                    group,
+                    order
+                )
 
                 activeDownloads[downloadId] = job
             } catch (e: Exception) {
@@ -288,79 +273,7 @@ class Downloader(
         }
     }
 
-    private fun handleHttpDownload(
-        context: Context,
-        extension: Extension<*>,
-        audio: Streamable.Source.Http,
-        completeTrack: Track,
-        file: File,
-        downloadId: Long,
-        notificationId: Int,
-        group: DownloadGroup?,
-        order: Int
-    ): Job = launch {
-        downloadSemaphore.withPermit {
-            val headers =
-                audio.request.headers.entries.joinToString("\r\n") { "${it.key}: ${it.value}" }
-            val ffmpegCommand = buildString {
-                if (headers.isNotEmpty()) append("-headers \"$headers\" ")
-                append("-i \"${audio.request.url}\" ")
-                append("-c copy ")
-                append("-bsf:a aac_adtstoasc ")
-                append("\"${file.absolutePath}\"")
-            }
-
-            try {
-                val session = FFmpegKit.execute(ffmpegCommand)
-                if (ReturnCode.isSuccess(session.returnCode)) {
-                    dao.insertDownload(
-                        DownloadEntity(
-                            id = downloadId,
-                            itemId = completeTrack.id,
-                            clientId = extensionList.value?.find { it.id == extension.id }?.id
-                                ?: "",
-                            groupName = group?.title,
-                            downloadPath = file.absolutePath
-                        )
-                    )
-
-                    context.saveToCache(completeTrack.id, completeTrack, "downloads")
-                    sendDownloadCompleteBroadcast(context, downloadId, order)
-
-                    updateGroupProgress(context, group, notificationId)
-                } else if (ReturnCode.isCancel(session.returnCode)) {
-                    DownloadNotificationHelper.errorNotification(
-                        context,
-                        notificationId,
-                        completeTrack.title,
-                        "Download cancelled"
-                    )
-                } else {
-                    val failureMessage = session.failStackTrace ?: "Unknown error"
-                    throwable.emit(Exception("FFmpeg failed with code ${session.returnCode}"))
-                    DownloadNotificationHelper.errorNotification(
-                        context,
-                        notificationId,
-                        completeTrack.title,
-                        failureMessage
-                    )
-                }
-            } catch (e: Exception) {
-                throwable.emit(e)
-                DownloadNotificationHelper.errorNotification(
-                    context,
-                    notificationId,
-                    completeTrack.title,
-                    e.message ?: "Unknown error"
-                )
-            } finally {
-                activeDownloads.remove(downloadId)
-                notificationBuilders.remove(notificationId)
-            }
-        }
-    }
-
-    private fun handleStreamDownload(
+    private fun handleDownload(
         context: Context,
         extension: Extension<*>,
         audio: Streamable.Source,
@@ -376,9 +289,17 @@ class Downloader(
     ): Job = launch {
         downloadSemaphore.withPermit {
             val tempFile = File(targetDirectory, "$sanitizedTitle.tmp").apply { createNewFile() }
+            var totalHttpBytes = 0L
             val inputStream = when (audio) {
                 is Streamable.Source.Channel -> audio.channel.toInputStream()
                 is Streamable.Source.ByteStream -> audio.stream
+                is Streamable.Source.Http -> {
+                    val client = OkHttpClient()
+                    val request = Request.Builder().url(audio.request.url).build()
+                    val response = client.newCall(request).execute()
+                    totalHttpBytes = response.body.contentLength()
+                    response.body.byteStream()
+                }
                 else -> null
             } ?: throw IllegalArgumentException("Unsupported audio stream type")
 
@@ -386,6 +307,7 @@ class Downloader(
             val totalBytes = when (audio) {
                 is Streamable.Source.Channel -> audio.totalBytes
                 is Streamable.Source.ByteStream -> audio.totalBytes
+                is Streamable.Source.Http -> totalHttpBytes
                 else -> -1L
             }
 
