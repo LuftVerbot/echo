@@ -1,9 +1,12 @@
 package dev.brahmkshatriya.echo.download
 
+import android.annotation.SuppressLint
 import android.content.Context
 import android.content.Intent
 import android.os.Environment
 import androidx.core.app.NotificationCompat
+import androidx.media3.common.C
+import androidx.media3.common.MediaItem
 import com.arthenica.ffmpegkit.FFprobeKit
 import com.arthenica.ffmpegkit.ReturnCode
 import dev.brahmkshatriya.echo.EchoDatabase
@@ -37,8 +40,12 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
+import kotlinx.io.IOException
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody
+import okhttp3.Response
 import java.io.BufferedInputStream
 import java.io.File
 import java.io.FileOutputStream
@@ -220,7 +227,6 @@ class Downloader(
                     else -> "m4a"
                 }
 
-                val uniqueFile = getUniqueFile(targetDirectory, sanitizedTitle, fileExtension)
                 val downloadId = completeTrack.id.id()
                 val notificationId: Int
                 val notificationBuilder: NotificationCompat.Builder
@@ -273,6 +279,7 @@ class Downloader(
         }
     }
 
+    @SuppressLint("NewApi")
     private fun handleDownload(
         context: Context,
         extension: Extension<*>,
@@ -302,6 +309,68 @@ class Downloader(
                 }
                 else -> null
             } ?: throw IllegalArgumentException("Unsupported audio stream type")
+
+
+            fun sendKeyRequestToLicenseServer(keyRequest: KeyRequest): ByteArray {
+                // Define the MediaType for the request (e.g., application/octet-stream)
+                val mediaType = "application/octet-stream".toMediaTypeOrNull()
+
+                // Create the request body using the key request data
+                val requestBody = RequestBody.create(mediaType, keyRequest.requestData)
+
+                // Build the HTTP request
+                val request = Request.Builder()
+                    .url(keyRequest.licenseServerUrl) // Use the license server URL from the key request
+                    .post(requestBody) // Send the request as a POST
+                    .build()
+
+                // Initialize the OkHttpClient
+                val client = OkHttpClient()
+
+                return try {
+                    // Execute the request and get the response
+                    val response: Response = client.newCall(request).execute()
+
+                    // Check if the response is successful
+                    if (!response.isSuccessful) {
+                        throw IOException("Unexpected code ${response.code}")
+                    }
+
+                    // Return the response body as a ByteArray
+                    response.body.bytes() ?: throw IOException("Empty response body")
+                } catch (e: IOException) {
+                    // Handle network or other IO exceptions
+                    throw RuntimeException("Failed to send key request to license server", e)
+                }
+            }
+
+            val item = MediaItem.Builder().build().buildUpon()
+            when (val decryption = (audio as? Streamable.Source.Http)?.decryption) {
+                null -> {}
+                is Streamable.Decryption.Widevine -> {
+                    val drmRequest = decryption.license
+                    val config = MediaItem.DrmConfiguration.Builder(C.WIDEVINE_UUID)
+                        .setLicenseUri(drmRequest.url).setMultiSession(decryption.isMultiSession)
+                        .setLicenseRequestHeaders(drmRequest.headers).build()
+                    item.setDrmConfiguration(config)
+                }
+            }
+            val test = item.build()
+
+            val drmKeyManager = DrmKeyManager(C.WIDEVINE_UUID)
+
+            drmKeyManager.openSession()
+
+            val keyRequest = drmKeyManager.getKeyRequest(keyType = 1, inputStream.readAllBytes())
+
+            val licenseResponse: ByteArray = sendKeyRequestToLicenseServer(keyRequest)
+
+            val keySetId = drmKeyManager.provideKeyResponse(licenseResponse)
+
+            println("KeySetId obtained: ${keySetId?.joinToString(",")}")
+
+            // Release DRM resources when done
+            drmKeyManager.release()
 
             var received: Long = 0
             val totalBytes = when (audio) {
@@ -379,9 +448,7 @@ class Downloader(
                     context.saveToCache(completeTrack.id, completeTrack, "downloads")
                     try {
                         val data = getLyrics(extension, completeTrack, clientId)
-                        if (data != null) {
-                            context.saveToCache(completeTrack.id, data, "lyrics")
-                        }
+                        context.saveToCache(completeTrack.id, data, "lyrics")
                     } catch (e: Exception) {
                         throwable
                     }
