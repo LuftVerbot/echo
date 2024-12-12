@@ -5,8 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.os.Environment
 import androidx.core.app.NotificationCompat
-import androidx.media3.common.C
-import androidx.media3.common.MediaItem
+import com.arthenica.ffmpegkit.FFmpegKit
 import com.arthenica.ffmpegkit.FFprobeKit
 import com.arthenica.ffmpegkit.ReturnCode
 import dev.brahmkshatriya.echo.EchoDatabase
@@ -40,12 +39,9 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
-import kotlinx.io.IOException
-import okhttp3.MediaType.Companion.toMediaTypeOrNull
+import okhttp3.Headers.Companion.toHeaders
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import okhttp3.RequestBody
-import okhttp3.Response
 import java.io.BufferedInputStream
 import java.io.File
 import java.io.FileOutputStream
@@ -279,6 +275,136 @@ class Downloader(
         }
     }
 
+    /**
+     * {
+     * 	"file": [
+     * 		{
+     * 			"file_id": "203bd3fde2466dbf6a3965287edc226fc81fb0e5",
+     * 			"format": "OGG_VORBIS_320"
+     * 		},
+     * 		{
+     * 			"file_id": "6dc2abfc4e1ab2796de3e031d5de1b67a1fa6c68",
+     * 			"format": "OGG_VORBIS_160"
+     * 		},
+     * 		{
+     * 			"file_id": "c093bf1cacf23bb47c57ddaee423e766476815cb",
+     * 			"format": "OGG_VORBIS_96"
+     * 		},
+     * 		{
+     * 			"file_id": "1ff17af1aa05b920feba464e5a2d24e0e98beadd",
+     * 			"format": "MP4_256_DUAL"
+     * 		},
+     * 		{
+     * 			"file_id": "40edcdce036b634212884fd2764b63c939cf920e",
+     * 			"format": "MP4_256"
+     * 		},
+     * 		{
+     * 			"file_id": "3a7231c2db5e5c642922fc0451257e2b6395b5c8",
+     * 			"format": "MP4_128_DUAL"
+     * 		},
+     * 		{
+     * 			"file_id": "cc11f83227626289c843b4a46549679475729c1b",
+     * 			"format": "MP4_128"
+     * 		},
+     * 		{
+     * 			"file_id": "cbc18ee0c9cffa37dbfa60b6b3f8e8ca099e4944",
+     * 			"format": "AAC_24"
+     * 		}
+     * 	]
+     * }
+     */
+
+    private fun getPSSH(audio: Streamable.Source): String {
+        val client = OkHttpClient()
+        val audioHttp = audio as? Streamable.Source.Http
+        val decryption = audioHttp?.decryption as Streamable.Decryption.Widevine
+        val id = "40edcdce036b634212884fd2764b63c939cf920e" // placeholder
+        val request = Request.Builder().url("https://seektables.scdn.co/seektable/$id.json").headers(decryption.license.headers.toHeaders()).build()
+        println("FUCK YOU ${decryption.license}")
+        println("FUCK YOU ${decryption.license.headers}")
+        val response = client.newCall(request).execute()
+        val pssh = response.body.string().substringAfter("\"pssh\": \"").substringBefore("\",")
+        return pssh
+    }
+
+    private fun getWidevineDecryptionKey() {
+
+    }
+
+    private fun handleHttpDownload(
+        context: Context,
+        extension: Extension<*>,
+        audio: Streamable.Source,
+        completeTrack: Track,
+        file: File,
+        downloadId: Long,
+        notificationId: Int,
+        group: DownloadGroup?,
+        order: Int
+    ): Job = launch {
+        audio as Streamable.Source.Http
+        downloadSemaphore.withPermit {
+            val headers =
+                audio.request.headers.entries.joinToString("\r\n") { "${it.key}: ${it.value}" }
+            val ffmpegCommand = buildString {
+                if (headers.isNotEmpty()) append("-headers \"$headers\" ")
+                append("-i \"${audio.request.url}\" ")
+                append("-c copy ")
+                append("-bsf:a aac_adtstoasc ")
+                append("\"${file.absolutePath}\"")
+            }
+
+            try {
+                val session = FFmpegKit.execute(ffmpegCommand)
+                if (ReturnCode.isSuccess(session.returnCode)) {
+                    dao.insertDownload(
+                        DownloadEntity(
+                            id = downloadId,
+                            itemId = completeTrack.id,
+                            clientId = extensionList.value?.find { it.id == extension.id }?.id
+                                ?: "",
+                            groupName = group?.title,
+                            downloadPath = file.absolutePath
+                        )
+                    )
+
+                    context.saveToCache(completeTrack.id, completeTrack, "downloads")
+                    sendDownloadCompleteBroadcast(context, downloadId, order)
+
+                    updateGroupProgress(context, group, notificationId)
+                } else if (ReturnCode.isCancel(session.returnCode)) {
+                    DownloadNotificationHelper.errorNotification(
+                        context,
+                        notificationId,
+                        completeTrack.title,
+                        "Download cancelled"
+                    )
+                } else {
+                    val failureMessage = session.failStackTrace ?: "Unknown error"
+                    throwable.emit(Exception("FFmpeg failed with code ${session.returnCode}"))
+                    DownloadNotificationHelper.errorNotification(
+                        context,
+                        notificationId,
+                        completeTrack.title,
+                        failureMessage
+                    )
+                }
+            } catch (e: Exception) {
+                throwable.emit(e)
+
+                DownloadNotificationHelper.errorNotification(
+                    context,
+                    notificationId,
+                    completeTrack.title,
+                    e.message ?: "Unknown error"
+                )
+            } finally {
+                activeDownloads.remove(downloadId)
+                notificationBuilders.remove(notificationId)
+            }
+        }
+    }
+
     @SuppressLint("NewApi")
     private fun handleDownload(
         context: Context,
@@ -310,67 +436,19 @@ class Downloader(
                 else -> null
             } ?: throw IllegalArgumentException("Unsupported audio stream type")
 
-
-            fun sendKeyRequestToLicenseServer(keyRequest: KeyRequest): ByteArray {
-                // Define the MediaType for the request (e.g., application/octet-stream)
-                val mediaType = "application/octet-stream".toMediaTypeOrNull()
-
-                // Create the request body using the key request data
-                val requestBody = RequestBody.create(mediaType, keyRequest.requestData)
-
-                // Build the HTTP request
-                val request = Request.Builder()
-                    .url(keyRequest.licenseServerUrl) // Use the license server URL from the key request
-                    .post(requestBody) // Send the request as a POST
-                    .build()
-
-                // Initialize the OkHttpClient
-                val client = OkHttpClient()
-
-                return try {
-                    // Execute the request and get the response
-                    val response: Response = client.newCall(request).execute()
-
-                    // Check if the response is successful
-                    if (!response.isSuccessful) {
-                        throw IOException("Unexpected code ${response.code}")
-                    }
-
-                    // Return the response body as a ByteArray
-                    response.body.bytes() ?: throw IOException("Empty response body")
-                } catch (e: IOException) {
-                    // Handle network or other IO exceptions
-                    throw RuntimeException("Failed to send key request to license server", e)
-                }
-            }
-
-            val item = MediaItem.Builder().build().buildUpon()
-            when (val decryption = (audio as? Streamable.Source.Http)?.decryption) {
-                null -> {}
-                is Streamable.Decryption.Widevine -> {
-                    val drmRequest = decryption.license
-                    val config = MediaItem.DrmConfiguration.Builder(C.WIDEVINE_UUID)
-                        .setLicenseUri(drmRequest.url).setMultiSession(decryption.isMultiSession)
-                        .setLicenseRequestHeaders(drmRequest.headers).build()
-                    item.setDrmConfiguration(config)
-                }
-            }
-            val test = item.build()
-
-            val drmKeyManager = DrmKeyManager(C.WIDEVINE_UUID)
-
-            drmKeyManager.openSession()
-
-            val keyRequest = drmKeyManager.getKeyRequest(keyType = 1, inputStream.readAllBytes())
-
-            val licenseResponse: ByteArray = sendKeyRequestToLicenseServer(keyRequest)
-
-            val keySetId = drmKeyManager.provideKeyResponse(licenseResponse)
-
-            println("KeySetId obtained: ${keySetId?.joinToString(",")}")
-
-            // Release DRM resources when done
-            drmKeyManager.release()
+            val uniqueFile = getUniqueFile(targetDirectory, sanitizedTitle, fileExtension)
+            handleHttpDownload(
+                context,
+                extension,
+                audio,
+                completeTrack,
+                uniqueFile,
+                downloadId,
+                notificationId,
+                group,
+                order
+            )
+            getPSSH(audio)
 
             var received: Long = 0
             val totalBytes = when (audio) {
