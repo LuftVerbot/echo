@@ -110,6 +110,7 @@ dependencies {
     implementation("com.github.bosphere.android-fadingedgelayout:fadingedgelayout:1.0.0")
     implementation("me.zhanghai.android.fastscroll:library:1.3.0")
     implementation("com.flaviofaria:kenburnsview:1.0.7")
+    implementation("com.telefonica:nestedscrollwebview:0.1.6")
 
     implementation("com.arthenica:ffmpeg-kit-https:6.0-2")
     implementation("net.jthink:jaudiotagger:3.0.1")
