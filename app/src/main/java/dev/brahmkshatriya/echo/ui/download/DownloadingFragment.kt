@@ -4,7 +4,6 @@ import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
-import androidx.core.view.updatePadding
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.activityViewModels
 import androidx.paging.PagingData
@@ -12,8 +11,8 @@ import androidx.recyclerview.widget.ConcatAdapter
 import dev.brahmkshatriya.echo.R
 import dev.brahmkshatriya.echo.common.models.Shelf
 import dev.brahmkshatriya.echo.databinding.FragmentDownloadingBinding
-import dev.brahmkshatriya.echo.offline.OfflineExtension
 import dev.brahmkshatriya.echo.extensions.getExtension
+import dev.brahmkshatriya.echo.offline.OfflineExtension
 import dev.brahmkshatriya.echo.ui.adapter.ShelfAdapter
 import dev.brahmkshatriya.echo.ui.common.openFragment
 import dev.brahmkshatriya.echo.ui.item.ItemFragment
@@ -40,7 +39,6 @@ class DownloadingFragment : Fragment() {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         setupTransition(view)
         applyInsets {
-            binding.exceptionIconContainer.updatePadding(top = it.top)
             binding.recyclerView.applyContentInsets(it)
         }
         applyBackPressCallback()
@@ -76,6 +74,8 @@ class DownloadingFragment : Fragment() {
         val offline = viewModel.extensionListFlow.getExtension(OfflineExtension.metadata.id)
             ?: return
         val downloadedAdapter = ShelfAdapter(this, "downloads", offline)
+        downloadedAdapter.applyCurrent(this, binding.recyclerView)
+
         val titleAdapter = ShelfAdapter(this, "", offline)
 
         val concatAdapter = ConcatAdapter(
