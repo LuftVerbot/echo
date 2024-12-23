@@ -201,7 +201,7 @@ class Downloader(
                 val stream = completeTrack.servers.select(settings)
 
                 val media = extension.get<TrackClient, Streamable.Media.Server>(throwable) {
-                    loadStreamableMedia(stream) as Streamable.Media.Server
+                    loadStreamableMedia(stream, true) as Streamable.Media.Server
                 } ?: return@launch
 
                 val source = media.sources.select(settings)
