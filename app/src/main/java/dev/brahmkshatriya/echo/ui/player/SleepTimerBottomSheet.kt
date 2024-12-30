@@ -4,6 +4,7 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.content.DialogInterface
 import android.os.Bundle
+import android.text.format.DateFormat
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -22,6 +23,7 @@ import dev.brahmkshatriya.echo.R
 import dev.brahmkshatriya.echo.databinding.DialogSleepTimerBinding
 import dev.brahmkshatriya.echo.databinding.ItemRulerBinding
 import dev.brahmkshatriya.echo.utils.autoCleared
+import dev.brahmkshatriya.echo.utils.dpToPx
 import dev.brahmkshatriya.echo.viewmodels.PlayerViewModel
 import dev.brahmkshatriya.echo.viewmodels.SnackBar.Companion.createSnack
 import java.util.Calendar
@@ -52,13 +54,13 @@ class SleepTimerBottomSheet : BottomSheetDialogFragment() {
                 }
             })
             doOnLayout {
-                val itemWidth = 24 * resources.displayMetrics.density
+                val itemWidth = 24.dpToPx(requireContext())
                 val padding = (width - itemWidth) / 2
-                adapter.padding = (padding / itemWidth).toInt()
+                adapter.padding = (padding / itemWidth)
                 adapter.notifyDataSetChanged()
                 post {
                     layoutManager.scrollToPositionWithOffset(
-                        adapter.getPositionFromTime(last), padding.toInt()
+                        adapter.getPositionFromTime(last), padding
                     )
                     post { selectMiddleItem() }
                 }
@@ -77,8 +79,9 @@ class SleepTimerBottomSheet : BottomSheetDialogFragment() {
         binding.topAppBar.setOnMenuItemClickListener {
             when (it.itemId) {
                 R.id.schedule -> {
+                    val is24Hour = DateFormat.is24HourFormat(context)
                     val picker = MaterialTimePicker.Builder()
-                        .setTimeFormat(TimeFormat.CLOCK_12H)
+                        .setTimeFormat(if (is24Hour) TimeFormat.CLOCK_24H else TimeFormat.CLOCK_12H)
                         .setTitleText(getString(R.string.sleep_on_specific_time))
                         .build()
                     picker.addOnCancelListener { picker.dismiss() }
