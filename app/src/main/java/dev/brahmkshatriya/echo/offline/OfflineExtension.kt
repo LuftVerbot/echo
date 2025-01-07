@@ -353,11 +353,15 @@ class OfflineExtension(
         context.saveToCache("search_history", history, "offline")
     }
 
-    override suspend fun searchTabs(query: String) =
-        listOf("All", "Tracks", "Albums", "Artists").map { Tab(it, it) }
+    override suspend fun searchTabs(query: String) = if (query.isBlank()) listOf()
+    else listOf("All", "Tracks", "Albums", "Artists").map { Tab(it, it) }
 
     override fun searchFeed(query: String, tab: Tab?) = run {
-        query.ifBlank { return@run emptyList() }
+        query.ifBlank {
+            return@run library.songList.sortedByDescending {
+                it.extras["addDate"]?.toLongOrNull()
+            }.map { it.toMediaItem().toShelf() }
+        }
         saveInHistory(query)
         val tracks = library.songList.map { it }.searchBy(query) {
             listOf(it.title, it.album?.title) + it.artists.map { artist -> artist.name }
@@ -469,7 +473,8 @@ class OfflineExtension(
     override suspend fun moveTrackInPlaylist(
         playlist: Playlist, tracks: List<Track>, fromIndex: Int, toIndex: Int
     ) {
-        context.moveSongInPlaylist(playlist.id.toLong(), fromIndex, toIndex)
+        val song = tracks[fromIndex].id.toLong()
+        context.moveSongInPlaylist(playlist.id.toLong(), song, fromIndex, toIndex)
     }
 
     override suspend fun onEnterPlaylistEditor(playlist: Playlist, tracks: List<Track>) {}
