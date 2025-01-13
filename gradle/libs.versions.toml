@@ -65,6 +65,9 @@ kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serializa
 kotlin-reflect = { module = "org.jetbrains.kotlin:kotlin-reflect", version.ref = "kotlin" }
 junit = { module = "junit:junit", version.ref = "junit" }
 
+ffmpeg = { module = "com.arthenica:ffmpeg-kit-https", version = "6.0-2" }
+jaudiotagger = { module = "net.jthink:jaudiotagger", version = "3.0.1" }
+
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
 kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
