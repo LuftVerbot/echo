@@ -65,7 +65,7 @@ class Radio(
         ): State.Loaded? {
             val list = extensionListFlow.first { it != null }
             val extension = list?.find { it.metadata.id == clientId }
-            when (val client = extension?.instance?.value?.getOrNull()) {
+            when (val client = extension?.instance?.value()?.getOrNull()) {
                 null -> {
                     messageFlow.emit(context.noClient())
                 }
@@ -119,40 +119,39 @@ class Radio(
             true
         }
 
-    private fun loadPlaylist() {
-        val mediaItem = player.currentMediaItem ?: return
+    private suspend fun loadPlaylist() {
+        val mediaItem = withContext(Dispatchers.Main) { player.currentMediaItem } ?: return
         val client = mediaItem.extensionId
         val item = mediaItem.track.toMediaItem()
         val itemContext = mediaItem.context
         stateFlow.value = State.Loading
-        scope.launch {
-            val loaded =
-                start(context, messageFlow, throwFlow, extensionList, client, item, itemContext, 0)
-            stateFlow.value = loaded ?: State.Empty
-            if (loaded != null) play(loaded, 0)
-        }
+        val loaded =
+            start(context, messageFlow, throwFlow, extensionList, client, item, itemContext, 0)
+        stateFlow.value = loaded ?: State.Empty
+        if (loaded != null) play(loaded, 0)
     }
 
     private var autoStartRadio = settings.getBoolean(AUTO_START_RADIO, true)
 
-    init {
-        settings.registerOnSharedPreferenceChangeListener { pref, key ->
-            if (key == AUTO_START_RADIO)
-                autoStartRadio = pref.getBoolean(AUTO_START_RADIO, true)
-        }
+    private val listener = SharedPreferences.OnSharedPreferenceChangeListener { pref, key ->
+        if (key != AUTO_START_RADIO) return@OnSharedPreferenceChangeListener
+        autoStartRadio = pref.getBoolean(AUTO_START_RADIO, true)
     }
 
-    private fun startRadio() {
+    init {
+        settings.registerOnSharedPreferenceChangeListener(listener)
+    }
+
+    private suspend fun startRadio() {
         if (!autoStartRadio) return
-        if (player.hasNextMediaItem() || player.currentMediaItem == null) return
+        val hasNext = withContext(Dispatchers.Main) {
+            player.hasNextMediaItem() || player.currentMediaItem == null
+        }
+        if (hasNext) return
         when (val state = stateFlow.value) {
             is State.Loading -> {}
-            is State.Empty -> {
-                if (stateFlow.value != State.Empty) return
-                loadPlaylist()
-            }
-
-            is State.Loaded -> scope.launch {
+            is State.Empty -> loadPlaylist()
+            is State.Loaded -> {
                 val toBePlayed = state.played + 1
                 if (toBePlayed == state.tracks.size) loadPlaylist()
                 if (play(state, toBePlayed)) {
@@ -163,12 +162,12 @@ class Radio(
     }
 
     override fun onTimelineChanged(timeline: Timeline, reason: Int) {
-        startRadio()
+        scope.launch { startRadio() }
     }
 
     override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
         if (player.mediaItemCount == 0) stateFlow.value = State.Empty
-        startRadio()
+        scope.launch { startRadio() }
     }
 }
 
